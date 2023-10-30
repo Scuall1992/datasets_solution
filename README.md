@@ -76,13 +76,17 @@ For all columns, I convert to lowercase and trim any potential spaces at the beg
 As a result, the dataset sizes have increased:
 
 Facebook 72077 -> 145232
+
 Google 356520 -> 580891
+
 Web 72018 -> 111720
 
 But then I also removed all rows where the 'name' column value is null:
 
 Facebook 145232 -> 145216
+
 Google 580891 -> 580843
+
 Web 111720 -> 50602
 
 And saved the results in parquet format.
@@ -157,16 +161,83 @@ I decided to improve the search for similar company names. Instead of the Levens
 https://huggingface.co/tasks/sentence-similarity
 
 
+I implemented the entire solution using PySpark. However, due to the fact that all the computations were done on my laptop, I couldn't process the entire dataset in a reasonable time.
+
+Initially, I decided to investigate two datasets: facebook and google.
+
+After performing a crossJoin, I ended up with 84 billion rows.
+
+That's why I filtered the rows and divided them into three datasets:
+
+1. Rows where category names and phone numbers match (22,274 rows).
+2. Rows where category names and domain names match (111,251 rows).
+3. Rows where category names, country names, city names, and domain names match (16,055 rows).
+
+The entire computation of three datasets took me 7 hours, but I restarted the entire process several times to optimize the search.
+
+I process each row and calculate the similarity percentage of company names. Upon completion, I merge all datasets, remove duplicates, and filter rows with more than 90% similarity. But I have also had a rows where similarity was 100%.
+
+Additionally, I group by all columns to aggregate category names back into a single row.
+
+For example:
+Before group
+```
+    name     | category
+    company1 | managers
+    company1 | real estate - agents
+    company2 | web development agencies
+    company3 | digital
+    company3 | marketing agencies
+```
+
+After group
+```
+    name     | category
+    company1 | managers & real estate - agents
+    company2 | web development agencies
+    company3 | digital & marketing agencies
+```
+
+As a result, I managed to find around 14,000 identical companies. The quality of the results is much better than with the Levenshtein algorithm because it captures similar meanings.
+
+# Problems and Concerns:
+
+- The model considered the strings "saint james church" and "saint john church" as identical. This can be addressed by additional checks based on other criteria. However, I can only decide to remove this row from the resulting dataset. Therefore, the solution does not guarantee 100% accuracy.
+
+- The performance intensity issue isn't resolved, but this can be circumvented with a powerful cluster and distributed computations. I designed a solution that parallelizes very well and found a way to optimize the model delivery to each executor, eliminating the need to transfer it over the network each time.
+
+- We need a separate way to handle address merges for companies. Sometimes datasets complement each other; one may have a postal code that is missing in the other dataset.
+
+- Merging all three datasets significantly reduces the number of companies found. The website dataset does not contain enough information, and half of the company names are simply not specified, making it impossible to match the remaining data. Therefore, it makes sense to create combinations of datasets like fb-gg, gg-web, web-fb, and fb-gg-web, then merge them into one, remove duplicates, and clear all conflicting rows.
 
 
-# The decisions I have made in order to join the 3 datasets include:
+
 
 ## 1. What column will you use to join?
 
+I decided to join based on similar company names and then discard rows with discrepancies.
+
+I also separately tried joining by phone numbers and managed to find about 9 thousand similar companies. However, considering the size of the datasets, this doesn't solve the problem.
 
 ## 2. If you have data conflicts once you join, which one do you believe?
 
+I discard all conflicting situations when country names or phone numbers doesn't match
 
 ## 3. If you have very similar data, what information will you keep?
 
+For addresses, I would keep both versions as they might complement each other.
 
+In the case when one dataset contains null and the other has a value, the choice is obvious
+
+
+## Summary / Disclaimer
+
+I decided not to spend time on refactoring the code, and the file "fuzzy_match.ipynb" looks unstructured, but I tried my best to find answers to the given questions and fit within the stated time.
+
+This program can be improved by conducting a more detailed analysis of all the companies found and additional checks on data quality.
+
+I also laid the foundation for optimal operation on a cluster.
+
+To improve the quality, a more extensive model can be used for searching similar names; I used a 500MB version.
+
+I look forward to comments and feedback.
